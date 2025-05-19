@@ -2,13 +2,18 @@
 const canvas = document.getElementById('canvas-container');
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(90, window.innerWidth / window.innerHeight, 0.1, 10000);
+camera.layers.enable(1); // Включаем слой для частиц
 camera.updateProjectionMatrix(); // Обязательно обновляйте матрицу после изменений
 
 const renderer = new THREE.WebGLRenderer({
     canvas,
     antialias: true,
-    alpha: true
+    alpha: true,
+    powerPreference: "high-performance",
+    logarithmicDepthBuffer: true // Для больших дистанций
 });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.autoClear = false;
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ReinhardToneMapping;
 renderer.toneMappingExposure = 1.5;
@@ -26,7 +31,8 @@ let emissionPeakReached = false;
 const PARTICLE_BURST_COUNT = 300;
 let burstParticles = null;
 // Добавляем в раздел с переменными
-let particlesActivated = false;
+let particlesActivated = false; // Флаг активации частиц
+const PARTICLES_MIN_OPACITY = 0.3; // Минимальная прозрачность частиц
 
 // Настройка Bloom эффекта
 const bloomParams = {
@@ -91,7 +97,7 @@ function handleScroll() {
 // Обновленные настройки частиц
 const PARTICLE_SETTINGS = {
   count: 200,            // Общее количество частиц
-  size: 0.02,           // Размер частиц
+  size: 2.4,           // Размер частиц
   speed: 0.003,         // Скорость движения
   spawnArea: 0.1        // Область появления вокруг модели (0-1)
 };
@@ -455,7 +461,7 @@ function createParticles(center, radius) {
         colors[i * 3 + 1] = 1.0;
         colors[i * 3 + 2] = 1.0;
 
-        sizes[i] = radius * 0.01; // Начальный размер частиц
+        sizes[i] = radius * 0.1; // Начальный размер частиц
     }
 
     geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3)); // Позиции частиц
@@ -463,18 +469,22 @@ function createParticles(center, radius) {
     geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));   // Размеры частиц
 
     const material = new THREE.PointsMaterial({ // Материал для отображения частиц
-        size: radius * 0.04,                     // Фиксированный размер каждой частицы
+        size: radius * 0.03,                     // Фиксированный размер каждой частицы
         vertexColors: true,                      // Используем заданные цвета
         transparent: true,                       // Частицы полупрозрачные
         opacity: 0.8,                            // Непрозрачность около 80%
         blending: THREE.AdditiveBlending,        // Эффект свечения при наложении цветов
-        sizeAttenuation: true                   // ОТКЛЮЧИТЬ масштабирование размера
+        sizeAttenuation: true, // Важно отключить attenuation
+        depthWrite: false // Добавляем эту строку
     });
 
     particles = new THREE.Points(geometry, material); // Создаем набор частиц
     particles.layers.enable(1);                      // Включаем слой 1
-    particles.visible = false;                       // Скрываем пока частицы
-    particles.material.opacity = 0;                  // Полностью прозрачный начальный материал
+    particles.frustumCulled = false; // Отключаем отсечение по фрустуму
+    particles.renderOrder = 1; // Устанавливаем высокий порядок рендеринга
+
+    //particles.visible = false;                       // Скрываем пока частицы
+    //particles.material.opacity = 0;                  // Полностью прозрачный начальный материал
     scene.add(particles);                            // Добавляем частицы в сцену
 
     // Данные для управления движением частиц
@@ -488,22 +498,33 @@ function createParticles(center, radius) {
     };
 }
 
-// Обновление частиц
 function updateParticles() {
-    if (!particles || !particles.visible) return; // Добавляем проверку на visible
+    if (!particles || !particlesActivated) return;
 
     const pos = particles.geometry.attributes.position.array;
     const time = Date.now() * 0.001;
+    const modelScale = model.scale.length();
 
     for (let i = 0; i < PARTICLE_COUNT; i++) {
         const v = particles.userData.velocities[i];
         const o = i * 3;
-        pos[o] += v.x + Math.sin(time * 0.5 + v.offset) * 0.0005;
-        pos[o + 1] += v.y + Math.cos(time * 0.6 + v.offset) * 0.0005;
-        pos[o + 2] += v.z + Math.sin(time * 0.4 + v.offset) * 0.0005;
+        
+        // Масштабируем движение частиц относительно размера модели
+        pos[o] += (v.x + Math.sin(time * 0.5 + v.offset) * 0.0005 * modelScale);
+        pos[o + 1] += (v.y + Math.cos(time * 0.6 + v.offset) * 0.0005 * modelScale);
+        pos[o + 2] += (v.z + Math.sin(time * 0.4 + v.offset) * 0.0005 * modelScale);
     }
 
     particles.geometry.attributes.position.needsUpdate = true;
+    
+    // Автоматическая коррекция прозрачности
+    if (camera.position.z < EXPLODE_THRESHOLD) {
+        const fadeFactor = THREE.MathUtils.clamp(
+            camera.position.z / EXPLODE_THRESHOLD,
+            0.3, 1
+        );
+        particles.material.opacity = 0.8 * fadeFactor;
+    }
 }
 
 // Обработка движения мыши
@@ -524,7 +545,7 @@ document.addEventListener('mousemove', (event) => {
     isCursorNear = distance < REACT_DISTANCE;
 
     if (isCursorNear) {
-        // Активируем частицы при первом наведении
+        // Активируем частицы только один раз при первом наведении
         if (!particlesActivated) {
             particlesActivated = true;
             particles.visible = true;
@@ -533,7 +554,6 @@ document.addEventListener('mousemove', (event) => {
                 duration: 0.5,
                 ease: "power2.out"
             });
-            console.log("Particles activated");
         }
         mouse.x = (cursorX / rect.width) * 2 - 1;
         mouse.y = - (cursorY / rect.height) * 2 + 1;
@@ -549,6 +569,7 @@ document.addEventListener('mousemove', (event) => {
             // Управляем только небольшой вибрацией
             explodeFactor = Math.min(explodeFactor + 0.03, 0.3); // Максимум 0.3 вместо 1.0
         } else {
+            particles.material.opacity = Math.min(1, particles.material.opacity + 0.05);
             explodeFactor = Math.max(explodeFactor - 0.01, 0);
         }
     } else {
@@ -632,8 +653,16 @@ function animate() {
     requestAnimationFrame(animate);
 
     if (!model) return; // Не анимируем, если модель не загружена
+        // Очистка только глубины
+    renderer.clearDepth();
     
+    // Рендерим частицы после основной сцены
+    renderer.render(scene, camera);
     updateCameraPosition();
+    // Всегда обновляем частицы после активации
+    if (particlesActivated) {
+        updateParticles();
+    }
 
     try {
         updateRotation();
@@ -655,6 +684,8 @@ function animate() {
         console.error('Animation error:', e);
     }
 }
+
+
 
 // Ресайз
 window.addEventListener('resize', () => {
