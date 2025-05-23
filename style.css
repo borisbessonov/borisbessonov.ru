@@ -1,6 +1,6 @@
 body {
   margin: 0;
-  background: #ffffff;
+  background-color: #ffffff;
   /* Разрешаем скролл для всего body */
   overflow-x: hidden;
 }
@@ -8,12 +8,18 @@ body {
 #canvas-container {
   /* Фиксируем канвас на всю страницу */
   position: fixed;
+  background-color: #ffffff;
+  mix-blend-mode: normal;
   top: 0;
   left: 0;
   width: 100vw;
   height: 100vh;
   z-index: 10;
   pointer-events: none; /* Чтобы можно было скроллить под канвасом */
+}
+#canvas-container canvas {
+  display: block;
+  background-color: #ffffff;
 }
 
 .content-scroll {
